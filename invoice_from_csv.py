@@ -1,5 +1,6 @@
 import csv
 from decimal import Decimal, ROUND_HALF_UP
+from datetime import datetime
 from pathlib import Path
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import mm
@@ -10,10 +11,13 @@ def money(d: Decimal) -> str:
     s = f"{d:.2f}".replace(".", ",")
     return f"{s} €"
 
-def parse_decimal_de(s: str) -> Decimal:
-    # "1.234,56" -> Decimal("1234.56")
-    s = s.strip().replace("€", "").replace(" ", "").replace(".", "").replace(",", ".")
-    return Decimal(s or "0")
+def get_current_date_str():
+    return datetime.now().strftime("%d.%m.%Y")
+
+def parse_decimal(s: str) -> Decimal:
+    # "45 min" -> Decimal("45")
+    numb = s.strip().replace(" min", "")
+    return Decimal(numb or "0")
 
 def read_items(csv_path: Path):
     items = []
@@ -45,13 +49,14 @@ def make_invoice_pdf(csv_path: str, out_pdf: str):
     }
     buyer = {
         "name": "Intellego GmbH",
-        "addr": "Bornitzer Str. \n54321 Berlin",
+        "addr": "Bornitzstraße 73-75\n10365 Berlin",
     }
     invoice_no = "RE-2025-001"
-    invoice_date = "16.12.2025"
+    # i need a fucntion that genrates the current date in dd.mm.yyyy format
+
+    invoice_date = get_current_date_str()
     service_date = "16.12.2025"
     vat_rate = Decimal("0.19")   # 0.19 / 0.07 / 0.00
-    small_business = False       # True -> kein USt-Ausweis
 
     # ===== Daten einlesen =====
     items = read_items(Path(csv_path))
@@ -61,8 +66,8 @@ def make_invoice_pdf(csv_path: str, out_pdf: str):
     # ===== PDF bauen =====
     c = canvas.Canvas(out_pdf, pagesize=A4)
     w, h = A4
-    net = sum(parse_decimal_de(it["Dauer"]) for it in items) / 60.0
-
+    total_hour = sum(parse_decimal(it["Dauer"]) for it in items)
+    net = total_hour * 32 / 60
     margin = 18 * mm
     x0 = margin
     y = h - margin
@@ -90,7 +95,7 @@ def make_invoice_pdf(csv_path: str, out_pdf: str):
     # Empfängerblock
     y = h - margin - 40*mm
     c.setFont("Helvetica", 10)
-    c.drawString(x0, y, seller["name"] + " · " + seller["addr"].replace("\n", " · "))
+    #c.drawString(x0, y, seller["name"] + " · " + seller["addr"].replace("\n", " · "))
     y -= 8*mm
     c.setFont("Helvetica-Bold", 11)
     c.drawString(x0, y, buyer["name"]); y -= 5*mm
@@ -114,22 +119,16 @@ def make_invoice_pdf(csv_path: str, out_pdf: str):
     # Tabellenzeilen
     row_h = 7*mm
     for i, it in enumerate(items, start=1):
-        amount = it["Dauer"]
-
         # Seitenumbruch
         if y < margin + 50*mm:
             c.showPage()
             y = h - margin
             c.setFont("Helvetica", 10)
 
-        #c.drawString(x0, y, str(i))
         c.drawString(x0 + 10*mm, y, it["Datum"])
         c.drawString(x0 + 35*mm, y, it["Begin"])
         c.drawString(x0 + 55*mm, y, it["Ort"])
         c.drawString(w - margin - 45*mm, y, it["Dauer"])
-        #c.drawRightString(w - margin - 45*mm, y, str(it["qty"]).replace(".", ","))
-        #c.drawRightString(w - margin - 25*mm, y, money(it["unit"]))
-        #c.drawRightString(w - margin, y, money(amount))
         y -= row_h
 
     # Summenblock
@@ -140,22 +139,18 @@ def make_invoice_pdf(csv_path: str, out_pdf: str):
     sum_x_value = w - margin
 
     c.setFont("Helvetica", 10)
-    c.drawString(sum_x_label, y, "Zwischensumme (netto)")
-    c.drawRightString(sum_x_value, y, money(net)); y -= 6*mm
+    c.drawString(sum_x_label, y, "Zwischensumme (Stunden)")
+    c.drawRightString(sum_x_value, y, money(total_hour / 60)); y -= 6*mm
 
-    if small_business:
-        c.setFont("Helvetica", 9)
-        c.drawString(x0, y, "Hinweis: Kein Ausweis von Umsatzsteuer, da Kleinunternehmer gemäß § 19 UStG.")
-        y -= 6*mm
-    else:
-        c.setFont("Helvetica", 10)
-        c.drawString(sum_x_label, y, f"Umsatzsteuer ({int(vat_rate*100)}%)")
-    #    c.drawRightString(sum_x_value, y, money(vat)); y -= 6*mm
+    y -= 6*mm
 
     c.setFont("Helvetica-Bold", 11)
     c.drawString(sum_x_label, y, "Gesamtbetrag")
-    #c.drawRightString(sum_x_value, y, money(gross)); y -= 12*mm
+    c.drawRightString(sum_x_value, y, money(net)); y -= 12*mm
 
+    c.setFont("Helvetica", 9)
+    c.drawString(x0, y, "Hinweis: Kein Ausweis von Umsatzsteuer, da Kleinunternehmer gemäß § 19 UStG.")
+    y -= 15*mm
     # Zahlung
     c.setFont("Helvetica", 10)
     c.drawString(x0, y, "Bitte überweisen Sie den Gesamtbetrag innerhalb von 14 Tagen auf:"); y -= 6*mm
